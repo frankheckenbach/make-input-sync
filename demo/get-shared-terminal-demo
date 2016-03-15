@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# Written by Frank Heckenbach <f.heckenbach@fh-soft.de> 2012-2016.
+#
+# This program is in the public domain where legally possible.
+# Otherwise, this program is free software; as a special exception
+# the author gives unlimited permission to copy and/or distribute it,
+# with or without modifications, as long as this notice is preserved.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY, to the extent permitted by law; without
+# even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+# PARTICULAR PURPOSE.
+
+. ../get-shared-terminal
+
+# Some non-interactive stuff, possibly time-consuming ...
+echo "Running non-interactive stuff $1" >&2
+echo "Creating $1"
+sleep 1
+
+# Sometimes, we need interactivity. In this demo, this is indicated by "-i".
+# More typically, this might depend on what the previous code did.
+if [ x"$2" = x"-i" ]; then
+
+  # Try to get the terminal.
+  if get_shared_terminal; then
+
+    # We have the terminal and can use it exclusively for input and output.
+    {
+
+      # Now we can do interactive stuff, e.g. something like
+      #   rm -i some_file
+      # or reading input, which we do in this demo.
+      # You should try to avoid time-consuming stuff here, as it would
+      # block the terminal for parallel jobs.
+      read -p "Enter data for $1: " data
+
+    } <&"$TRY_TERMINAL_FD" >&0 2>&0
+
+    # Release terminal again.
+    # If no time-consuming stuff follows (like here), this is actually not
+    # necessary. However, if you do it, it must be after any usage of
+    # TRY_TERMINAL_FD.
+    release_shared_terminal
+
+    # Note, this goes to the original stdout again, not to the terminal.
+    echo "$data"
+
+  else
+
+    # No terminal available. This is not an error, but must be expected.
+    echo "*** $1: no terminal available, can't do interactive stuff" >&2
+    echo "no data available"
+
+  fi
+fi
