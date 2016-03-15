@@ -1,0 +1,78 @@
+# Get sychronized access to the terminal, using the FD kept in
+# $SHARED_TERMINAL_FD if available.
+#
+# Must be *sourced* from a *bash* script!
+
+# Written by Frank Heckenbach <f.heckenbach@fh-soft.de> 2012-2016.
+#
+# This program is in the public domain where legally possible.
+# Otherwise, this program is free software; as a special exception
+# the author gives unlimited permission to copy and/or distribute it,
+# with or without modifications, as long as this notice is preserved.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY, to the extent permitted by law; without
+# even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+# PARTICULAR PURPOSE.
+
+if [ -z "$BASH_VERSION" ] || [ ${#BASH_SOURCE[@]} -lt 2 ]; then
+  echo "get-shared-terminal must be *sourced* from a *bash* script!" >&2
+  exit 1
+fi
+
+# If no shared terminal was set up, try stdin (FD 0) by default.
+# This works if running under non-parallel make from a terminal.
+TRY_TERMINAL_FD=0
+
+# Call this function when you want to use the shared terminal.
+# If it returns 0, the shared terminal is available as
+# &"$TRY_TERMINAL_FD"
+get_shared_terminal ()
+{
+  if [ -n "$SHARED_TERMINAL_FD" ]; then
+    # We would rather lock $SHARED_TERMINAL_FD, but something else
+    # (interactive shells?) locks terminals already in typical
+    # cases, so this does not work reliably. We just need something
+    # common to all instances. We could pass a unique file name
+    # from the top-level make or wrapper, but to simplify things,
+    # we just use /dev/null here. This requires less setup, though
+    # it locks even unrelated terminals which is not a big problem
+    # in a typical use case, maybe even a small advantage by
+    # preventing concurrent runs from interfering with each other.
+
+    # bash feature: allocate a new FD
+    exec {SHARED_TERMINAL_LOCK_FD}< /dev/null
+
+    # the lock is kept as long as a (forked) copy of the FD exists
+    flock "$SHARED_TERMINAL_LOCK_FD"
+
+    TRY_TERMINAL_FD="$SHARED_TERMINAL_FD"
+
+    # Avoid locking again if called multiple times. (When called
+    # again in a different subshell which is not a subshell of the
+    # current one, or after calling release_shared_terminal,
+    # SHARED_TERMINAL_LOCK_FD will have been closed and
+    # SHARED_TERMINAL_FD has its original value again, so this case
+    # also works correctly.)
+    ORIG_SHARED_TERMINAL_FD="$SHARED_TERMINAL_FD"
+    SHARED_TERMINAL_FD=""
+  fi
+
+  # return test result
+  [ -t "$TRY_TERMINAL_FD" ]
+}
+
+# You do not need to call this function if your script does not do
+# much after the interactive part. If you call it, it must be
+# outside of any code block that uses $TRY_TERMINAL_FD; if you need
+# the terminal again later, you can call get_shared_terminal again.
+release_shared_terminal ()
+{
+  if [ -n "$ORIG_SHARED_TERMINAL_FD" ]; then
+    exec {SHARED_TERMINAL_LOCK_FD}<&-
+    SHARED_TERMINAL_LOCK_FD=""
+    SHARED_TERMINAL_FD="$ORIG_SHARED_TERMINAL_FD"
+    ORIG_SHARED_TERMINAL_FD=""
+    TRY_TERMINAL_FD=0
+  fi
+}
