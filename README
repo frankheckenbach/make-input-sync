@@ -1,0 +1,225 @@
+Interactive input for parallel jobs under GNU make
+==================================================
+
+Motivation
+----------
+
+With the ubiquity of multi-core CPUs these days, parallel building
+is often used to reduce build times. GNU make has supported this for
+a long time via the "-j" option (see
+https://www.gnu.org/software/make/manual/html_node/Parallel.html).
+
+Recently, it added an "--output-sync" option to handle output from
+parallel jobs more nicely (see
+https://www.gnu.org/software/make/manual/html_node/Parallel-Output.html).
+
+It does however not contain a mechanism to support input to parallel
+jobs well. The respective documentation says:
+
+  Two processes cannot both take input from the same device at the
+  same time. To make sure that only one recipe tries to take input
+  from the terminal at once, make will invalidate the standard input
+  streams of all but one running recipe. [...] It is unpredictable
+  which recipe will have a valid standard input stream [...].
+  We will change how this aspect of make works if we find a better
+  alternative. In the mean time, you should not rely on any recipe
+  using standard input at all if you are using the parallel
+  execution feature [...].
+
+  (https://www.gnu.org/software/make/manual/html_node/Parallel-Input.html)
+
+This code provides a solution to this problem for some restricted
+cases. It has been proven in practice with parallel and recursive
+make, together with output-sync.
+
+Example use case
+----------------
+
+Most Makefiles do not need interactive input at all, much less in
+parallel jobs. Here is one case I encountered where I did need it.
+This is a brief description that omits some irrelevant details:
+
+Basically, I need to synchronize a lot of data files from A to B,
+and in case a file already exists in B and differs, I want to show
+the user a diff and ask for confirmation to overwrite it if possible
+(i.e. if a terminal is available); if not possible, or if the user
+denies confirmation, the file will be skipped. Since I have many
+such files to install, but usually few of them actually differ, it
+makes sense to parallelize, so while the user is contemplating a
+diff, the sync job can continue to check more files. Since this sync
+job is usually run at the same time as compiling and installing some
+related programs, it makes sense to parallelize it all -- ideally,
+the compilers get nearly all the CPU time while the installers use
+most of the disk I/O, so in total, it can be much faster than doing
+it after one another. Finally, since the sync rules are structured
+in a way that is easily expressed in a Makefile, as are the
+compiling rules (as usual), make is the obvious tool for it.
+
+Having written suitable Makefiles, it all works well apart from the
+issue of terminal access for those user requests. With non-parallel
+make it works fine, but is slow, whereas with parallel make it is
+fast, but it is unpredictable which sync job gets the terminal on
+stdin, so usually some differing files will be skipped because their
+sync jobs cannot ask for confirmation. The code presented here
+solves this problem.
+
+Limitations
+-----------
+
+The solution implemented here is POSIX specific, especially
+concerning the notion of terminals and file-locking, and I have no
+idea if/how it can be ported. If you want to contribute a port to
+another system, please contact me to include your code.
+
+Furthermore, the given implemention only works for jobs which are
+bash scripts. This is however an implementation detail and it should
+not be too difficult to do the equivalent in say C code; I just have
+not had any need for that yet. Since it has to make changes in the
+context of the interactive program, it is not possible to provide
+only a C implementation and call that from a shell script containing
+the interactive code, so we do need bash code here when the
+interactive programs are written in bash.
+
+Implementation
+--------------
+
+This implementation is done without any changes to make itself.
+Unlike output-sync, I do not see any advantage of implementing it
+within make -- in fact I do not even see an easy way of doing it,
+since make would need to be told by the running jobs when they need
+interactive access at a time when make just waits for them to
+finish. So I think it is not only easier, but also a better design
+to implement it externally. (Besides, most make users will never
+need it, so its usefulness as a general-purpose feature in make
+would be highly questionable. Also the limitations described above
+may not be acceptable for an addition to make itself.)
+
+The basic idea is to "tunnel" the original stdin via another file
+descriptor if it is a terminal, in order to hide it from make's
+input redirection. By doing so, the code assumes responsibility to
+synchronize access to it, to avoid the problems that make's
+redirection normally avoids.
+
+Since this tunnelling is meant to bypass make's stdin restriction,
+it must be done before make starts, so it cannot be done using e.g.
+make's "$(SHELL)" feature. One way to achieve this is to invoke make
+via a wrapper. A simple one is provided as make-with-shared-terminal
+which saves a copy of stdin if it is a terminal and passes down that
+fd number via an environment variable which is used by
+get_shared_terminal, described below.
+
+Note: make-with-shared-terminal as well as get-shared-terminal
+specifically check for terminals; one might want to also check for
+other interactive inputs such as sockets, but I have not had a need
+to do so.
+
+Usage
+-----
+
+The implementation needs the "flock" command-line tool which e.g.
+under Linux is available in the package "util-linux" which is
+installed on most Linux distributions by default.
+
+Also, of course, bash and GNU make are required.
+
+Normal, non-interactive make jobs require no changes.
+
+Jobs that (might) require interactivity must be bash scripts (for
+this implementation) and obey the following rules:
+
+- Source get-shared-terminal before interactivity. It just defines
+  shell functions etc., so just sourcing it has no effect and it can
+  always be done near the start of the script, even if interactivity
+  may not be needed every time.
+
+- As long as the job does not actually need interactivity (e.g. in
+  the use case described above, when files do not differ, i.e. the
+  vast majority of times), it does not request it and nothing
+  special (or time-consuming) happens.
+
+- When it needs interactivity, it calls get_shared_terminal. This
+  locks a shared resource (see comments in the file for details) and
+  provides an FD for the terminal if possible.
+
+  If no terminal was saved (e.g. if make was invoked without the
+  wrapper), get_shared_terminal tries stdin if it is a terminal, so
+  it works at least as well as without these changes (i.e. with
+  non-parallel make, or non-deterministically under parallel make).
+
+  If stdin is not a terminal either (e.g. parallel make was invoked
+  without the wrapper and the job was not lucky to get the real
+  stdin, or make was not called from a terminal to start with),
+  get_shared_terminal fails. The calling script has to expect this
+  possibility and avoid interactivity then. The jobs in my actual
+  use case, as well in the demo provided will just output a message
+  telling the user so.
+
+- If get_shared_terminal succeds, the FD to access the terminal will
+  be available in $TRY_TERMINAL_FD. The same FD should be used for
+  stdin, stdout and stderr, although it was only saved from stdin.
+  The reason is that interactive input usually goes hand-in-hand
+  with output, such as a prompt, whereas the normal non-interactive
+  output of make jobs might be redirected to log files or buffered
+  using output-sync. Since the code explicitly checks for terminals
+  and terminals are always read/write, the FD can be used for input
+  and output.
+
+- The terminal remains locked until release_shared_terminal is
+  called or the script terminates. It is not necessary to call
+  release_shared_terminal, but if the script goes on to do
+  time-consuming stuff after interactivity, it can do so to yield
+  the terminal to other jobs. It can re-request the terminal later
+  if it needs it again. However, several interactive parts of the
+  script that logically belong together from a user's point of view
+  should not release the terminal in between.
+
+Demo
+----
+
+A simple demo is included.
+
+In the demo/ directory, you can try it like this:
+
+% make clean; make
+
+Run the demo without parallelism, and without input synchronization
+(which is not needed without parallelism). Nothing special here.
+
+Due to the lack of parallelism, this can be rather slow.
+
+% make clean; make -j
+
+Run the demo with parallelism, but without input synchronization.
+Therefore, typically some or all of the jobs will not get the
+terminal and give the respective message.
+
+Thanks to parallelism, this is fast, but lacks interactivity.
+
+% make clean; ../make-with-shared-terminal -j
+
+Run the demo with parallelism and with input synchronization.
+All the jobs will get the terminal, though in unpredictable order.
+
+This is fast and provides interactivity.
+
+Copyright
+---------
+
+The code is in the public domain where legally possible.
+
+This document is released under the following license:
+
+Copyright 2012-2016 Frank Heckenbach <f.heckenbach@fh-soft.de>
+
+This document is free software: you can redistribute it and/or
+modify it under the terms of the GNU General Public License as
+published by the Free Software Foundation, either version 3 of
+the License, or (at your option) any later version.
+
+This document is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this document. If not, see <http://www.gnu.org/licenses/>.
