@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Written by Frank Heckenbach <f.heckenbach@fh-soft.de> 2012-2016.
+# Written by Frank Heckenbach <f.heckenbach@fh-soft.de> 2012-2021.
 #
 # This program is in the public domain where legally possible.
 # Otherwise, this program is free software; as a special exception
@@ -21,7 +21,7 @@ sleep 1
 
 # Sometimes, we need interactivity. In this demo, this is indicated by "-i".
 # More typically, this might depend on what the previous code did.
-if [ x"$2" = x"-i" ]; then
+if [ "$2" = "-i" ]; then
 
   # Try to get the terminal.
   if get_shared_terminal; then
@@ -36,7 +36,7 @@ if [ x"$2" = x"-i" ]; then
       # block the terminal for parallel jobs.
       read -p "Enter data for $1: " data
 
-    } <&"$TRY_TERMINAL_FD" >&0 2>&0
+    } <&"$TRY_TERMINAL_FD" >&0 2>&0  # use FD for stdin, stdout and stderr
 
     # Release terminal again.
     # If no time-consuming stuff follows (like here), this is actually not

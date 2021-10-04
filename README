@@ -128,14 +128,14 @@ Jobs that (might) require interactivity must be bash scripts (for
 this implementation) and obey the following rules:
 
 - Source get-shared-terminal before interactivity. It just defines
-  shell functions etc., so just sourcing it has no effect and it can
-  always be done near the start of the script, even if interactivity
-  may not be needed every time.
+  shell functions etc., so just sourcing it has no immediate effect
+  and can always be done near the start of the script, even if
+  interactivity may not be needed every time.
 
 - As long as the job does not actually need interactivity (e.g. in
   the use case described above, when files do not differ, i.e. the
-  vast majority of times), it does not request it and nothing
-  special (or time-consuming) happens.
+  vast majority of times), it does not request it. Nothing special
+  happens and the script will not be delayed waiting for other jobs.
 
 - When it needs interactivity, it calls get_shared_terminal. This
   locks a shared resource (see comments in the file for details) and
@@ -166,12 +166,14 @@ this implementation) and obey the following rules:
 
 - The terminal remains locked until release_shared_terminal is
   called or the script terminates. It is not necessary to call
-  release_shared_terminal, but if the script goes on to do
-  time-consuming stuff after interactivity, it can do so to yield
-  the terminal to other jobs. It can re-request the terminal later
-  if it needs it again. However, several interactive parts of the
-  script that logically belong together from a user's point of view
-  should not release the terminal in between.
+  release_shared_terminal before the script terminates, but if it
+  goes on to do time-consuming stuff after interactivity, it can do
+  so to yield the terminal to other interactive jobs.
+
+  It can re-request the terminal later via get_shared_terminal if it
+  needs it again. However, several interactive parts of the script
+  that logically belong together from a user's point of view should
+  not release the terminal in between.
 
 Demo
 ----
@@ -209,7 +211,7 @@ The code is in the public domain where legally possible.
 
 This document is released under the following license:
 
-Copyright 2012-2016 Frank Heckenbach <f.heckenbach@fh-soft.de>
+Copyright 2012-2021 Frank Heckenbach <f.heckenbach@fh-soft.de>
 
 This document is free software: you can redistribute it and/or
 modify it under the terms of the GNU General Public License as
